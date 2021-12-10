@@ -1,0 +1,188 @@
+---
+title: "Price and Promotion Effects on Demand"
+date:  "Nov. 23, 2021"
+output: html_notebook
+---
+
+### Alternative Models of Demand
+
+If we denote demand as $y_t$ and use the price $p_t$ as an explanatory variable we can propose at least two simple models of demand, as follows:
+
+1. A linear model:
+
+$$ y_t = b_0 - b_1 p_t $$
+
+2. A log-log model:
+
+$$ y_t = a p_t^b $$
+
+The model(2) above is called a log-log model, because it is equivalent to estimating the log of demand with a linear model using the log of price as a predictor.
+
+#### The Price Elasticity of Demand
+
+To see this we can take the log on both sides of model (2) to obtain:
+$$log(y_t) = log(a p_t^b) = log(a) + b\times log(p_t)$$
+
+An important charactristic of model (2) is that the $b$ coefficient estimated from the above linear log-log model corresponds to the (constant) price elasticity of demand.
+
+Recall from economics that the elasticity of demand is defined as the percentage of  change in demand as a result of a one percent change in price.  Using our symbols this is:
+
+$$
+\frac{\frac{\Delta y_t}{y_t}}{\frac{\Delta p_t}{p_t}} = 
+\frac{\Delta y_t}{\Delta p_t} \frac{p_t}{y_t} \approx
+\frac{\partial y_t}{\partial p_t} \frac{p_t}{y_t} =
+b\, a\, p_t^{b-1} \frac{p_t}{y_t} =
+b\,\frac{ap_t^b}{y_t} = b 
+$$
+
+Estimating $b$ is important both, for pricing decision making and for estimating demand in response to pricing changes; this estimation can be accomplished through regression with a log-log transformation of both prices and the demand function.
+
+Let us fit both models (1) and (2) to our soft-drink sales data.  We start by reading, joining and selecting the data.
+
+```{r warning=FALSE}
+library(fpp3)
+
+S <- read.csv("Soft Drinks Raw Sales Data.csv") %>%
+  mutate(STORE = as.factor(STORE),
+         UPC   = as.factor(UPC),
+         DEAL  = as.factor(DEAL),
+         FEAT  = as.factor(FEAT))
+
+U <- read.csv("UPC Soft Drinks.csv") %>%
+  mutate(UPC   = as.factor(UPC),
+         BRAND = as.factor(BRAND),
+         CLASS = as.factor(CLASS))
+
+D <- S %>% 
+  left_join(U, by="UPC") %>%
+  select(WEEK, STORE, UPC, BRAND, CLASS, UNITS, DOLLARS, DEAL, FEAT) %>%
+  mutate(PPU = DOLLARS / UNITS)
+```
+
+Let us first estimate the linear model (1)
+
+```{r}
+m1 <- lm(UNITS ~ PPU, data =D)
+summary(m1)
+```
+
+Now we fit the same data to model (2)
+
+```{r}
+m2 <- lm(log(UNITS) ~ log(PPU), data = D)
+summary(m2)
+```
+
+From the fit of model **m2** we obtain the price elasticity of demand as $b = -6.8$  This means that if we increase the sale price by 1%, demand **decreases** by 6.8%
+
+In addition to the fit statistics we can plot the data and the fitted curves to assess the fit visually
+
+```{r}
+plot(UNITS ~ PPU,
+     xlim = c(1.5, 3.0), 
+     ylim = c(0, 500), data = D)
+
+px <- seq(1.5, 3.0, length = 100)
+
+f1 <- predict(m1,new = data.frame(PPU = px))
+lines(f1 ~ px, col = "blue")
+
+f2 <- exp(predict(m2, new = data.frame(PPU = px)))
+lines(f2 ~ px, col = "red")
+```
+
+It is often very useful to examine the fit of the model visually by plotting demand and the fitted model over time for a specific store-product combination.
+
+```{r}
+D1.RC <- D %>%
+  data.frame(f.1 = fitted(m1), f.2 = exp(fitted(m2))) %>%
+  filter(BRAND == "Coke" & CLASS == "reg" & STORE == 1)
+
+plot(UNITS ~ WEEK, type = "l", data = D1.RC)
+title(main = "Regular Coke at Store 1")
+#points(f.1 ~ WEEK, col = "blue", data = D1.RC)
+points(f.2 ~ WEEK, col = "red", data = D1.RC)
+```
+
+The fit may not be great for every product.  Let us now try Regular Pepsi at Store #1
+
+```{r}
+D1.RP <- D %>%
+  data.frame(f.1 = fitted(m1), f.2 = exp(fitted(m2))) %>%
+  filter(BRAND == "Pepsi" & CLASS == "reg" & STORE == 1)
+
+plot(UNITS ~ WEEK, type = "l", data = D1.RP)
+title(main = "Regular Pepsi at Store 1")
+#points(f.1 ~ WEEK, col = "blue", data = D1.RP)
+points(f.2 ~ WEEK, col = "red", data = D1.RP)
+```
+
+#### The Substitute-Price Elasticity of Demand
+
+Consider now the following demand model:
+
+3. A log-log model with competition from a substitute product:
+
+$$ y_t = a  p_t^b q_t^{b_c}$$
+in this case we denote the price of the product in question as $p_t$ and the price of the substitute product as $q_t$.  
+
+Likewise it now can be demonstrated that $b$ is the self-price elasticity of demand while $b_c$ is the product's demand elasticity with respect to the competitive product.  Let us now fit model **m3** to the soft-drinks data.
+
+```{r}
+PSM <- read.csv("Category Substitutes.csv") %>%
+  mutate(UPC = as.factor(UPC),
+         C1  = as.factor(C1),
+         C2  = as.factor(C2),
+         C3  = as.factor(C3))
+
+J <- D %>% select(WEEK, STORE, UPC, PPU, DEAL, FEAT )
+
+DX <- D %>% 
+  left_join(PSM, by="UPC") %>%
+  left_join(J, by = c("WEEK", "STORE", "C1" = "UPC"), suf = c("",".S1"))
+
+m3 <- lm(log(UNITS) ~ log(PPU)  + log(PPU.S1), data = DX)
+summary(m3)
+```
+
+Using the competition-expanded model **m3** we can now estimate the self-price elaticity of demand as $b = -6.8$ and the substitute-price elasticity of demand as $b_c = 0.6$.  This means that a 1% increase in the product price decreases demand by 6.8%, while a 1% increase in the price of the substitute product increases demand by 0.6%
+
+Our time-series plots for Store 1 are as follows:
+
+```{r}
+DX1.RC <- DX %>%
+  data.frame(f.3 = exp(fitted(m3))) %>%
+  filter(BRAND == "Coke" & CLASS == "reg" & STORE == 1)
+
+plot(UNITS ~ WEEK, type = "l",  data = DX1.RC)
+title(main = "Regular Coke at Store 1: Model 3")
+points(f.3 ~ WEEK, col = "red", pch = 1, data = DX1.RC)
+```
+
+```{r}
+DX1.RC <- DX %>%
+  data.frame(f.3 = exp(fitted(m3))) %>%
+  filter(BRAND == "Pepsi" & CLASS == "reg" & STORE == 1)
+
+plot(UNITS ~ WEEK, type = "l", data = DX1.RC)
+title(main = "Regular Pepsi at Store 1: Model 3")
+points(f.3 ~ WEEK, col = "red", pch = 1, data = DX1.RC)
+```
+
+We can enrich the model further by adding:
+
+* DEAL and FEAT information
+* DEAL and FEAT information for the substitute product
+* DEAL and FEAT information for the second and third substitute products
+* Pricing information for the second and third substitute product
+* Store-specific demographic and socio-economic data
+* Additional store specific bundled products
+* Holiday information (calendar)
+* Special events (calendar)
+* ...
+
+How do we know when to stop adding explanatory variables?
+
+How do we know if we are overfitting the data?
+
+How can we account for the possible autocorrelation in the data?

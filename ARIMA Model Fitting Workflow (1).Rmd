@@ -1,0 +1,177 @@
+---
+title: "Fitting a Nonseasonal ARIMA Model Workflow"
+output: html_notebook
+---
+
+### Fitting of Alternative ARIMA and ETS Models
+
+The first step in fitting an ARIMA model to model a time-series is to determine if the time series is stationary and if it is not, determine how many diffrences is neccessary to take.
+
+We examine this question using the **aus_airpassengers** available in the library **fpp3**.  The **aus_airpassengers** is a **tsibble** with a single annual time-series.
+
+```{r message=FALSE, warning=FALSE}
+library(fpp3)
+library(tseries)
+
+# Load data and calculate the first two diffrences
+
+aus_airpassengers %>% 
+  mutate(diff.P = difference(Passengers),
+         diff2.P = difference(diff.P)) -> D
+
+D %>% autoplot(.vars = Passengers)
+D %>% autoplot(.vars = diff.P)
+D %>% autoplot(.vars = diff2.P)
+
+# Examine Stationarity Visually
+D %>% ACF(Passengers) %>% 
+  autoplot() + 
+  labs(title = "Passengers")
+D %>% ACF(diff.P) %>% 
+  autoplot() + 
+  labs(title = "diff.P")
+D %>% ACF(diff2.P) %>% 
+  autoplot() + 
+  labs(title = "diff2.P")
+```
+
+From the visual examination of the plots it is apparent that the *Passengers* time-series is not stationary, but the first and second difference may be.
+
+Next we examine ADF and the unit roots test results on these three time series.
+
+The Null Hypothesis of the KPSS root test is that data is stationary, hence we need to obtain a large value of p so we CANNOT reject the Null Hypothesis
+
+On the other hand the Null Hypothesis of the ADF test is that the data is NOT stationary, hence we need to obtain a small p-value to reject the Null Hypotehsis.
+
+```{r}
+D %>% features(Passengers, unitroot_kpss)
+D %>% features(diff.P, unitroot_kpss)
+D %>% features(diff2.P, unitroot_kpss)
+
+D %>% features(Passengers, unitroot_ndiffs)
+
+
+D$Passengers %>% adf.test()
+
+D$diff.P %>%
+  na.omit() %>%
+  adf.test()
+
+D$diff2.P %>%
+  na.omit() %>%
+  adf.test()
+
+```
+
+According to the KPSS test we need to difference *Passengers* twice before fitting the model. On the other hand the ADF test indicates that we may be able to fit a model to the date differencing it once or twice.
+
+Below we examine the ACf and PACF in order to determine what order of ARIMA models may be appropriate.
+
+```{r}
+
+D %>% gg_tsdisplay(Passengers, plot_type = "partial")  
+D %>% gg_tsdisplay(diff.P, plot_type = "partial")
+D %>% gg_tsdisplay(diff2.P, plot_type = "partial")
+```
+
+Based on this, it is apparent that a model with one difference $d=1$ may require only a constant.  That is a random walk with drift.  The model with two differences $d=2$ may require only a MA(1) component.
+
+Below we run the automatic ARIMA fit, a model with a single and a double difference and, for comparison purposes, an ETS model.
+
+```{r}
+m <- D %>% model(m1 = ARIMA(Passengers),
+                 m2 = ARIMA(Passengers ~ pdq(0,1,0)),
+                 m3 = ARIMA(Passengers ~ pdq(0,2,1)),
+                 m4 = ETS(Passengers))
+
+m %>% select(m1) %>% report()
+m %>% select(m2) %>% report()
+m %>% select(m3) %>% report()
+m %>% select(m4) %>% report()
+```
+
+
+Next we examine residuals to validate assumption of independence. Recall that in the ljung_box test. the Null Hypothesis is that residuals are uncorrelated. Hence, with a large value of p so we  conclude that the residual independence cannot be rejected.
+
+```{r}
+m %>% augment() %>%
+  features(.resid, ljung_box, lag = 10)
+
+m %>% select(m2) %>% gg_tsresiduals()
+m %>% select(m3) %>% gg_tsresiduals()
+m %>% select(m4) %>% gg_tsresiduals()
+```
+
+The analysis above implies that we cannot reject the residual independence hypothesis for any of the models (i.e., the tree models are OK)
+
+Next we examine the information criteria for the tree models under consideration.
+
+```{r}
+glance(m)
+```
+
+From the information criteria we can observe that either of the two ARIMA models (i.e., the (0,1,0) and the (0,2,1)) are apparently superior to the ETS(MAN) model.
+
+### Cross-Validation of Candidate Models
+
+To cross-validate a time-series forecasting model, we need to extend the file to repeatedly fit the model.  We start by assuming that the initial data consists of a small number of data, 10 points in the code below. Then in a sequential fashion, we recalculate the model assuming one additional point (datum) is observed.  Finally we can calculate the out-ofsample accuracy metrics by comparing each forecast in the horizon with the available data.
+
+See Section 5.11 in FPP
+
+
+
+
+```{r}
+
+D.CV <- D %>%
+  stretch_tsibble(.init = 10, .step = 1)
+
+```
+
+
+```{r}
+mC <- D.CV %>% 
+  model(A1 = ARIMA(Passengers ~ pdq(0,1,0)),
+        A2 = ARIMA(Passengers ~ pdq(0,2,1)),
+        MAN = ETS(Passengers ~ error("M") + trend("A") + season("N")))
+
+mC %>% 
+  forecast(h = 4) %>%
+  group_by(.id, .model) %>%
+  mutate(h = row_number()) %>%
+  ungroup() -> fCV
+ 
+```
+
+
+```{r}
+
+fCV %>%
+  accuracy(D, by = c("h", ".model")) %>%
+  ggplot(aes(x = h, y = MAPE, color = .model)) +
+  geom_line()
+
+fCV %>%
+  accuracy(D, by = c("h", ".model")) %>%
+  ggplot(aes(x = h, y = RMSE, color = .model)) +
+  geom_line()
+
+```
+
+
+```{r}
+m %>%
+  select(m2) %>%
+  forecast(h = 4) %>%
+  autoplot(D)
+
+m %>%
+  select(m3) %>%
+  forecast(h = 4) %>%
+  autoplot(D)
+```
+
+
+
+
+
